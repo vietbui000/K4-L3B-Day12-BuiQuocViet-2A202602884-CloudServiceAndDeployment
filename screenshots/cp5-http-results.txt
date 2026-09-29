@@ -1,0 +1,5 @@
+GET /health: 200 {"status":"ok","service":"day12-agent","version":"1.0.0"}
+GET /ready: 200 {"status":"ready","redis":true}
+POST /ask without key: 401 {"detail":"invalid or missing API key"}
+POST /ask with key: 200 {"answer":"Ngắn gọn: Hello phụ thuộc vào ba yếu tố — cấu hình qua biến môi trường, health check để orchestrator biết trạng thái, và giới hạn tài nguyên.","user_id":"cp5-review-1848d0b271114099b7bd454ce0880508","history_length":0,"cost_usd":2.115e-05,"tokens":{"in":1,"out":35}}
+Rate limit (15 requests, same user): [200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 429, 429, 429, 429, 429]
