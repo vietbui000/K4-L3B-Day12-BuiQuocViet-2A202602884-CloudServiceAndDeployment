@@ -209,6 +209,28 @@ Dấu ★ = file bạn phải sửa (hoặc tự tạo). Các file khác đọc 
 
 ## Chạy Kiểm Thử
 
+### Kiểm tra scale CP4
+
+Stack riêng dùng Nginx tại `http://localhost:8080`, ba agent dùng chung Redis:
+
+```bash
+docker compose -p day12-scale -f docker-compose.scale.yml up -d --build --scale agent=3
+docker compose -p day12-scale -f docker-compose.scale.yml ps
+curl http://localhost:8080/health
+curl http://localhost:8080/ready
+docker compose -p day12-scale -f docker-compose.scale.yml down
+```
+
+Không dùng `--scale agent=3` với file Compose mặc định vì cổng host 8000
+được dành cho một agent. Stack scale giữ dữ liệu Redis trong volume riêng.
+Nếu thay đổi số replica, restart Nginx để cập nhật danh sách upstream.
+
+Cost guard giữ trước tối đa `0.003 USD` cho mỗi lượt mock LLM rồi hoàn lại
+phần giữ trước sau khi ghi phí thực tế. Mức này dựa trên giới hạn câu hỏi
+2000 ký tự, 20 message lịch sử và giá mock hiện tại; cần tính lại khi đổi
+model hoặc giới hạn. Nếu process chết đột ngột, khoản giữ trước có thể còn
+đến khi TTL hết hạn, khiến quota khả dụng thấp hơn chi phí thực tế.
+
 ```bash
 pytest tests/test_cp1.py -v     # từng checkpoint
 pytest tests/ -v                # toàn bộ

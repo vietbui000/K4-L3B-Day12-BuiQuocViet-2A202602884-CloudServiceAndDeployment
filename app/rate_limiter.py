@@ -13,6 +13,7 @@ import time
 import uuid
 
 from fastapi import HTTPException, status
+from redis.exceptions import WatchError
 
 WINDOW_SECONDS = 60
 
@@ -36,7 +37,10 @@ class RateLimiter:
              ``self.client.zremrangebyscore(key, 0, now - WINDOW_SECONDS)``
           3. Trả về ``self.client.zcard(key)``
         """
-        raise NotImplementedError("TODO (CP3): cài đặt hit_count")
+        now = now if now is not None else time.time()
+        key = self._key(user_id)
+        self.client.zremrangebyscore(key, 0, now - WINDOW_SECONDS)
+        return int(self.client.zcard(key))
 
     def check(self, user_id: str, now: float | None = None) -> None:
         """Cho qua nếu còn quota, ngược lại raise 429.
@@ -56,4 +60,25 @@ class RateLimiter:
         Lưu ý thứ tự: **kiểm tra trước, ghi nhận sau**. Ghi trước rồi mới đếm
         sẽ chặn nhầm ngay ở request thứ ``limit``.
         """
-        raise NotImplementedError("TODO (CP3): cài đặt check")
+        now = now if now is not None else time.time()
+        key = self._key(user_id)
+        member = f"{now}:{uuid.uuid4().hex}"
+        while True:
+            with self.client.pipeline() as pipe:
+                try:
+                    pipe.watch(key)
+                    count = pipe.zcount(key, f"({now - WINDOW_SECONDS}", "+inf")
+                    if count >= self.limit:
+                        raise HTTPException(
+                            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                            detail="rate limit exceeded",
+                            headers={"Retry-After": str(WINDOW_SECONDS)},
+                        )
+                    pipe.multi()
+                    pipe.zremrangebyscore(key, "-inf", now - WINDOW_SECONDS)
+                    pipe.zadd(key, {member: now})
+                    pipe.expire(key, WINDOW_SECONDS)
+                    pipe.execute()
+                    return
+                except WatchError:
+                    continue  # Another instance used quota; recheck before inserting.

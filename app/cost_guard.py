@@ -7,8 +7,10 @@ user gửi 10 request/phút nhưng mỗi request 50k token vẫn đốt sạch n
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from contextlib import contextmanager
 
 from fastapi import HTTPException, status
+from redis.exceptions import WatchError
 
 # Giữ dữ liệu chi tiêu thêm ~40 ngày để còn đối soát sang tháng sau
 KEY_TTL_SECONDS = 40 * 24 * 3600
@@ -36,7 +38,8 @@ class CostGuard:
         Key chưa tồn tại → Redis trả None → hàm này phải trả ``0.0``.
         Nhớ ép kiểu ``float(...)`` vì Redis trả về chuỗi.
         """
-        raise NotImplementedError("TODO (CP3): cài đặt spent")
+        value = self.client.get(self._key(user_id, month))
+        return 0.0 if value is None else float(value)
 
     def check(
         self,
@@ -50,7 +53,37 @@ class CostGuard:
         → raise ``HTTPException(status_code=402, detail="monthly budget exceeded")``.
         402 = Payment Required, đúng ngữ nghĩa cho tình huống hết ngân sách.
         """
-        raise NotImplementedError("TODO (CP3): cài đặt check")
+        if self.spent(user_id, month) + estimated_cost > self.budget:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail="monthly budget exceeded",
+            )
+
+    @contextmanager
+    def reserve(self, user_id: str, estimated_cost: float):
+        """Reserve budget atomically across instances, then release the estimate.
+
+        The caller records actual cost inside this context. A process crash may
+        retain the reservation until TTL expiry; this deliberately fails closed.
+        """
+        month = self.current_month()
+        key = self._key(user_id, month)
+        while True:
+            with self.client.pipeline() as pipe:
+                try:
+                    pipe.watch(key)
+                    self.check(user_id, estimated_cost, month)
+                    pipe.multi()
+                    pipe.incrbyfloat(key, estimated_cost)
+                    pipe.expire(key, KEY_TTL_SECONDS)
+                    pipe.execute()
+                    break
+                except WatchError:
+                    continue
+        try:
+            yield month
+        finally:
+            self.record(user_id, -estimated_cost, month)
 
     def record(self, user_id: str, cost: float, month: str | None = None) -> float:
         """Cộng dồn chi phí vừa phát sinh, trả về tổng mới.
@@ -60,4 +93,7 @@ class CostGuard:
           2. ``self.client.expire(key, KEY_TTL_SECONDS)``
           3. ``return float(total)``
         """
-        raise NotImplementedError("TODO (CP3): cài đặt record")
+        key = self._key(user_id, month)
+        total = self.client.incrbyfloat(key, cost)
+        self.client.expire(key, KEY_TTL_SECONDS)
+        return float(total)
